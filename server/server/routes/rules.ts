@@ -1,6 +1,28 @@
-import { Router } from 'express'
+import { Router, type Request } from 'express'
 import type { RulesDb } from '../db/rulesDb'
 import type { MockRule } from '../types'
+
+type RequestWithBuffer = Request & { bodyBuffer?: Buffer }
+
+/**
+ * Prefer req.body when express.json populated it; otherwise parse bodyBuffer.
+ * Avoids "Invalid rule payload" when req.body is {} or undefined but the raw JSON is still on the request.
+ */
+function readJsonBody(req: Request): unknown {
+  const b = req.body as unknown
+  if (b !== null && typeof b === 'object' && !Array.isArray(b) && Object.keys(b as object).length > 0) {
+    return b
+  }
+  const buf = (req as RequestWithBuffer).bodyBuffer
+  if (Buffer.isBuffer(buf) && buf.length > 0) {
+    try {
+      return JSON.parse(buf.toString('utf8'))
+    } catch {
+      return b
+    }
+  }
+  return b
+}
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -69,7 +91,7 @@ export function createRulesRouter(db: RulesDb) {
   })
 
   router.post('/api/rules', (req, res) => {
-    const rule = normalizeRuleInput(req.body)
+    const rule = normalizeRuleInput(readJsonBody(req))
     if (!rule) return res.status(400).json({ error: 'Invalid rule payload.' })
     db.createRule(rule)
     res.status(201).json(rule)
@@ -79,7 +101,12 @@ export function createRulesRouter(db: RulesDb) {
     const id = req.params.id
     const existing = db.getAllRules().find((r) => r.id === id)
     if (!existing) return res.status(404).json({ error: 'Rule not found.' })
-    const next = normalizeRuleInput({ ...req.body, id }, existing)
+    const patch = readJsonBody(req)
+    const merged =
+      patch !== null && typeof patch === 'object' && !Array.isArray(patch)
+        ? { ...(patch as Record<string, unknown>), id }
+        : { id }
+    const next = normalizeRuleInput(merged, existing)
     if (!next) return res.status(400).json({ error: 'Invalid rule payload.' })
     const updated = db.updateRule(next)
     if (!updated) return res.status(404).json({ error: 'Rule not found.' })
@@ -93,7 +120,7 @@ export function createRulesRouter(db: RulesDb) {
   })
 
   router.post('/api/rules/import', (req, res) => {
-    const obj = req.body as any
+    const obj = readJsonBody(req) as any
     if (!obj || typeof obj !== 'object') return res.status(400).json({ error: 'Invalid JSON root.' })
     if (obj.version !== 1) return res.status(400).json({ error: 'Unsupported export version.' })
     if (!Array.isArray(obj.rules)) return res.status(400).json({ error: 'Invalid export format.' })
@@ -113,7 +140,8 @@ export function createRulesRouter(db: RulesDb) {
   })
 
   router.put('/api/config', (req, res) => {
-    const raw = typeof req.body?.targetBaseUrl === 'string' ? req.body.targetBaseUrl : ''
+    const body = readJsonBody(req) as { targetBaseUrl?: string }
+    const raw = typeof body?.targetBaseUrl === 'string' ? body.targetBaseUrl : ''
     const normalized = normalizeTargetBaseUrl(raw)
     if (!normalized.ok) return res.status(400).json({ error: normalized.error })
     db.setTargetBaseUrl(normalized.url)

@@ -59,19 +59,33 @@ async function main() {
     }),
   )
 
-  // Capture raw body for proxy forwarding (all content-types).
+  // JSON routes need req.body; proxy forward needs raw bytes on bodyBuffer. If we read the stream
+  // before express.json(), the parser sees an empty body and rule saves fail with "Invalid rule payload."
+  app.use(
+    express.json({
+      limit: '5mb',
+      verify: (req, _res, buf) => {
+        ;(req as express.Request & { bodyBuffer?: Buffer }).bodyBuffer = buf.length ? buf : Buffer.alloc(0)
+      },
+    }),
+  )
+
   app.use((req, _res, next) => {
+    const r = req as express.Request & { bodyBuffer?: Buffer }
+    if (r.bodyBuffer !== undefined) return next()
+    const m = req.method.toUpperCase()
+    if (m === 'GET' || m === 'HEAD') {
+      r.bodyBuffer = Buffer.alloc(0)
+      return next()
+    }
     const chunks: Buffer[] = []
     req.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)))
     req.on('end', () => {
-      ;(req as any).bodyBuffer = chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0)
+      r.bodyBuffer = chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0)
       next()
     })
     req.on('error', next)
   })
-
-  // Parse JSON for our CRUD endpoints (proxy uses bodyBuffer).
-  app.use(express.json({ limit: '5mb' }))
 
   const wss = new WebSocketServer({ server, path: '/ws' })
 
