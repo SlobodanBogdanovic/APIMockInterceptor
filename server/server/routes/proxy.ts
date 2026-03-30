@@ -52,7 +52,8 @@ export function createProxyRouter(opts: {
   const { db, emitLog } = opts
   const router = Router()
 
-  router.all('/api/*', async (req, res) => {
+  // Express 5 path matching is stricter; use a RegExp catch-all for /api.
+  router.all(/^\/api(?:\/.*)?$/, async (req, res) => {
     const method = req.method.toUpperCase()
     const url = req.originalUrl
 
