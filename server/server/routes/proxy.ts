@@ -32,6 +32,19 @@ function normalizeRuleHeaders(headers: { key: string; value: string }[]): Record
   return out
 }
 
+function normalizeTargetBaseUrl(raw: string): string | null {
+  const s = String(raw ?? '').trim()
+  if (!s) return null
+  const withProtocol = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s) ? s : `http://${s}`
+  try {
+    const u = new URL(withProtocol)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+    return u.toString().replace(/\/+$/, '')
+  } catch {
+    return null
+  }
+}
+
 export function createProxyRouter(opts: {
   db: RulesDb
   emitLog: (ev: RequestLogEvent) => void
@@ -76,7 +89,7 @@ export function createProxyRouter(opts: {
       return
     }
 
-    const base = db.getTargetBaseUrl()
+    const base = normalizeTargetBaseUrl(db.getTargetBaseUrl())
     if (!base) {
       const ts = new Date().toISOString()
       emitLog({
@@ -87,11 +100,26 @@ export function createProxyRouter(opts: {
         intercepted: false,
         status: 502,
       })
-      res.status(502).json({ error: 'No targetBaseUrl configured.' })
+      res.status(502).json({ error: 'No valid targetBaseUrl configured.' })
       return
     }
 
-    const targetUrl = new URL(req.originalUrl, base).toString()
+    let targetUrl: string
+    try {
+      targetUrl = new URL(req.originalUrl, `${base}/`).toString()
+    } catch {
+      const ts = new Date().toISOString()
+      emitLog({
+        id: createId(),
+        timestamp: ts,
+        method,
+        url,
+        intercepted: false,
+        status: 502,
+      })
+      res.status(502).json({ error: 'Invalid targetBaseUrl.' })
+      return
+    }
 
     const bodyBuffer =
       method === 'GET' || method === 'HEAD' ? undefined : (req as any).bodyBuffer ?? undefined

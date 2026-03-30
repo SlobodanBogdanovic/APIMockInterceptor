@@ -10,6 +10,19 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+function normalizeTargetBaseUrl(raw: string): { ok: true; url: string } | { ok: false; error: string } {
+  const s = String(raw ?? '').trim()
+  if (!s) return { ok: true, url: '' }
+  const withProtocol = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s) ? s : `http://${s}`
+  try {
+    const u = new URL(withProtocol)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false, error: 'Must be http(s).' }
+    return { ok: true, url: u.toString().replace(/\/+$/, '') }
+  } catch {
+    return { ok: false, error: 'Invalid URL.' }
+  }
+}
+
 function normalizeRuleInput(input: any, existing?: MockRule): MockRule | null {
   const id = typeof input?.id === 'string' && input.id ? input.id : existing?.id ?? createId()
   const createdAt = existing?.createdAt ?? (typeof input?.createdAt === 'string' ? input.createdAt : nowIso())
@@ -100,9 +113,11 @@ export function createRulesRouter(db: RulesDb) {
   })
 
   router.put('/api/config', (req, res) => {
-    const targetBaseUrl = typeof req.body?.targetBaseUrl === 'string' ? req.body.targetBaseUrl : ''
-    db.setTargetBaseUrl(targetBaseUrl)
-    res.json({ targetBaseUrl })
+    const raw = typeof req.body?.targetBaseUrl === 'string' ? req.body.targetBaseUrl : ''
+    const normalized = normalizeTargetBaseUrl(raw)
+    if (!normalized.ok) return res.status(400).json({ error: normalized.error })
+    db.setTargetBaseUrl(normalized.url)
+    res.json({ targetBaseUrl: normalized.url })
   })
 
   return router

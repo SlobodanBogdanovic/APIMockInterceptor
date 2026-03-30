@@ -6,13 +6,19 @@ type Props = {
   onRefresh: () => Promise<void>
 }
 
-function isHttpUrl(s: string): boolean {
-  if (!s.trim()) return true
+function normalizeBaseUrlInput(raw: string): { ok: true; url: string } | { ok: false } {
+  const s = raw.trim()
+  if (!s) return { ok: true, url: '' }
+
+  const withProtocol = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s) ? s : `http://${s}`
   try {
-    const u = new URL(s)
-    return u.protocol === 'http:' || u.protocol === 'https:'
+    const u = new URL(withProtocol)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return { ok: false }
+    // Keep as origin (plus any pathname user provided), but normalize trailing slash.
+    const normalized = u.toString().replace(/\/+$/, '')
+    return { ok: true, url: normalized }
   } catch {
-    return false
+    return { ok: false }
   }
 }
 
@@ -25,7 +31,8 @@ export function SettingsPanel({ value, onSave, onRefresh }: Props) {
     setDraft(value)
   }, [value])
 
-  const valid = useMemo(() => isHttpUrl(draft), [draft])
+  const normalized = useMemo(() => normalizeBaseUrlInput(draft), [draft])
+  const valid = normalized.ok
 
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-4">
@@ -49,12 +56,14 @@ export function SettingsPanel({ value, onSave, onRefresh }: Props) {
             setError(null)
           }}
           className="w-full rounded-md border border-white/10 bg-zinc-950/40 px-3 py-2 text-sm text-white outline-none focus:border-violet-400/60"
-          placeholder="e.g. https://jsonplaceholder.typicode.com"
+          placeholder="e.g. https://jsonplaceholder.typicode.com or localhost:8080"
         />
       </label>
 
       {draft.trim() && valid ? (
-        <div className="mt-1 text-xs text-emerald-300/80">Valid URL</div>
+        <div className="mt-1 text-xs text-emerald-300/80">
+          Will use <span className="font-mono">{normalized.url}</span>
+        </div>
       ) : null}
       {!valid ? (
         <div className="mt-1 text-xs text-rose-300/80">Must be a valid http(s) URL.</div>
@@ -73,7 +82,7 @@ export function SettingsPanel({ value, onSave, onRefresh }: Props) {
             setError(null)
             void (async () => {
               try {
-                await onSave(draft.trim())
+                await onSave(normalized.ok ? normalized.url : draft.trim())
               } catch (e) {
                 setError(e instanceof Error ? e.message : 'Failed to save.')
               } finally {
