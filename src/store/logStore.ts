@@ -35,6 +35,7 @@ type LogStore = {
   append: (entry: RequestLogEntry) => void
   clear: () => void
   setLogPassthrough: (value: boolean) => void
+  appendFromServerEvent: (event: any) => void
 }
 
 const LogContext = createContext<LogStore | null>(null)
@@ -49,6 +50,10 @@ export function LogProvider({ children }: { children: React.ReactNode }) {
       append: (entry) => dispatch({ type: 'append', entry }),
       clear: () => dispatch({ type: 'clear' }),
       setLogPassthrough: (value) => dispatch({ type: 'setLogPassthrough', value }),
+      appendFromServerEvent: (event) => {
+        if (!event || typeof event !== 'object') return
+        dispatch({ type: 'append', entry: event as RequestLogEntry })
+      },
     }),
     [state.entries, state.logPassthrough],
   )

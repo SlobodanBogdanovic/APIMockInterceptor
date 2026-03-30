@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Header } from './components/Header'
+import { SettingsPanel } from './components/SettingsPanel'
 import { RuleForm } from './components/RuleForm'
 import { RuleList } from './components/RuleList'
 import { RequestLog } from './components/RequestLog'
-import { initFetchInterceptor } from './interceptor/fetchInterceptor'
-import { initXhrInterceptor } from './interceptor/xhrInterceptor'
 import { useLogStore } from './store/logStore'
 import { useRulesStore } from './store/rulesStore'
 
@@ -39,29 +38,30 @@ export default function App() {
   const [importError, setImportError] = useState<string | null>(null)
 
   useEffect(() => {
-    const cleanupFetch = initFetchInterceptor({
-      getRules: () => rulesStore.rules,
-      onRuleHit: rulesStore.markRuleHit,
-      appendLog: logStore.append,
-      shouldLogPassthrough: () => logStore.logPassthrough,
-    })
-    const cleanupXhr = initXhrInterceptor({
-      getRules: () => rulesStore.rules,
-      onRuleHit: rulesStore.markRuleHit,
-      appendLog: logStore.append,
-      shouldLogPassthrough: () => logStore.logPassthrough,
-    })
+    void rulesStore.refreshAll()
 
-    return () => {
-      cleanupFetch()
-      cleanupXhr()
+    const ws = new WebSocket('ws://localhost:3001/ws')
+    ws.onmessage = (msg) => {
+      try {
+        const data = JSON.parse(String(msg.data))
+        if (data?.type === 'log' && data?.event) {
+          logStore.appendFromServerEvent(data.event)
+          if (data.event?.intercepted && data.event?.matchedRuleId) {
+            rulesStore.markRuleHit(String(data.event.matchedRuleId), String(data.event.timestamp))
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
+
+    return () => ws.close()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const editingRule = rulesStore.editingRule
 
-  const handleExport = () => {
+  const handleExport = async () => {
     downloadJson(
       `api-mock-interceptor-rules-${new Date().toISOString().slice(0, 19).replace(/[:]/g, '-')}.json`,
       rulesStore.exportRules(),
@@ -72,7 +72,7 @@ export default function App() {
     setImportError(null)
     try {
       const payload = await readJsonFile(file)
-      const res = rulesStore.importRulesReplaceAll(payload)
+      const res = await rulesStore.importRulesReplaceAll(payload)
       if (!res.ok) setImportError(res.error)
     } catch (e) {
       setImportError(e instanceof Error ? e.message : 'Import failed.')
@@ -90,6 +90,12 @@ export default function App() {
               {importError}
             </div>
           ) : null}
+
+          <SettingsPanel
+            value={rulesStore.targetBaseUrl}
+            onSave={rulesStore.setTargetBaseUrl}
+            onRefresh={rulesStore.refreshAll}
+          />
 
           <RuleForm
             editingRule={editingRule}
@@ -117,22 +123,11 @@ export default function App() {
               <button
                 type="button"
                 onClick={async () => {
-                  await fetch('/api/users', { method: 'GET' })
+                  await fetch('http://localhost:3001/api/users', { method: 'GET' })
                 }}
                 className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10"
               >
-                Trigger fetch GET /api/users
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const xhr = new XMLHttpRequest()
-                  xhr.open('GET', '/api/users')
-                  xhr.send()
-                }}
-                className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10"
-              >
-                Trigger XHR GET /api/users
+                Trigger proxy GET /api/users
               </button>
             </div>
           </div>

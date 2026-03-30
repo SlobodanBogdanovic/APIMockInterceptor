@@ -1,11 +1,13 @@
-import React, { createContext, useContext, useEffect, useMemo, useReducer } from 'react'
+import React, { createContext, useContext, useMemo, useReducer } from 'react'
 import type { HeaderKV, HttpMethod, MockRule, RulesExportV1 } from '../types'
 
-const STORAGE_KEY = 'api-mock-interceptor:rules:v1'
+const API_BASE = 'http://localhost:3001'
 
 type RulesState = {
   rules: MockRule[]
   editingRuleId: string | null
+  targetBaseUrl: string
+  loading: boolean
 }
 
 type RulesAction =
@@ -16,10 +18,14 @@ type RulesAction =
   | { type: 'toggleEnabled'; ruleId: string; enabled: boolean }
   | { type: 'setEditingRuleId'; ruleId: string | null }
   | { type: 'markHit'; ruleId: string; timestampIso: string }
+  | { type: 'setTargetBaseUrl'; value: string }
+  | { type: 'setLoading'; value: boolean }
 
 const initialState: RulesState = {
   rules: [],
   editingRuleId: null,
+  targetBaseUrl: '',
+  loading: false,
 }
 
 function reducer(state: RulesState, action: RulesAction): RulesState {
@@ -56,6 +62,10 @@ function reducer(state: RulesState, action: RulesAction): RulesState {
           r.id === action.ruleId ? { ...r, lastHitAt: action.timestampIso } : r,
         ),
       }
+    case 'setTargetBaseUrl':
+      return { ...state, targetBaseUrl: action.value }
+    case 'setLoading':
+      return { ...state, loading: action.value }
     default:
       return state
   }
@@ -63,6 +73,27 @@ function reducer(state: RulesState, action: RulesAction): RulesState {
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+  })
+  if (!res.ok) {
+    let msg = `Request failed (${res.status})`
+    try {
+      const data = await res.json()
+      if (data?.error) msg = String(data.error)
+    } catch {
+      // ignore
+    }
+    throw new Error(msg)
+  }
+  return (await res.json()) as T
 }
 
 export type RuleDraft = {
@@ -90,65 +121,14 @@ export function createEmptyRuleDraft(): RuleDraft {
   }
 }
 
-function normalizeImportedRule(rule: Partial<MockRule>): MockRule | null {
-  if (!rule) return null
-  const id = typeof rule.id === 'string' && rule.id.trim() ? rule.id : createId()
-  const now = new Date().toISOString()
-
-  const method =
-    rule.method === 'GET' ||
-    rule.method === 'POST' ||
-    rule.method === 'PUT' ||
-    rule.method === 'DELETE' ||
-    rule.method === 'PATCH' ||
-    rule.method === 'ANY'
-      ? rule.method
-      : 'ANY'
-
-  const headers: HeaderKV[] = Array.isArray(rule.headers)
-    ? rule.headers.map((h: any) => ({
-        id: typeof h?.id === 'string' && h.id ? h.id : createId(),
-        key: typeof h?.key === 'string' ? h.key : '',
-        value: typeof h?.value === 'string' ? h.value : '',
-      }))
-    : []
-
-  return {
-    id,
-    name: typeof rule.name === 'string' && rule.name.trim() ? rule.name : 'Imported rule',
-    enabled: typeof rule.enabled === 'boolean' ? rule.enabled : true,
-    method,
-    urlPattern: typeof rule.urlPattern === 'string' ? rule.urlPattern : '',
-    status: typeof rule.status === 'number' && Number.isFinite(rule.status) ? rule.status : 200,
-    delayMs: typeof rule.delayMs === 'number' && Number.isFinite(rule.delayMs) ? rule.delayMs : 0,
-    headers,
-    body: typeof rule.body === 'string' ? rule.body : '',
-    createdAt: typeof rule.createdAt === 'string' ? rule.createdAt : now,
-    updatedAt: typeof rule.updatedAt === 'string' ? rule.updatedAt : now,
-    lastHitAt: typeof rule.lastHitAt === 'string' ? rule.lastHitAt : undefined,
-  }
-}
-
-function loadRulesFromStorage(): MockRule[] {
-  const raw = localStorage.getItem(STORAGE_KEY)
-  if (!raw) return []
-  try {
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.map((r) => normalizeImportedRule(r)).filter(Boolean) as MockRule[]
-  } catch {
-    return []
-  }
-}
-
-function saveRulesToStorage(rules: MockRule[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rules))
-}
-
 type RulesStore = {
   rules: MockRule[]
   editingRuleId: string | null
   editingRule: MockRule | null
+  targetBaseUrl: string
+  loading: boolean
+  refreshAll: () => Promise<void>
+  setTargetBaseUrl: (value: string) => Promise<void>
   createRule: (draft: RuleDraft) => void
   updateRule: (id: string, draft: RuleDraft) => void
   deleteRule: (id: string) => void
@@ -157,20 +137,13 @@ type RulesStore = {
   cancelEditing: () => void
   markRuleHit: (id: string, timestampIso: string) => void
   exportRules: () => RulesExportV1
-  importRulesReplaceAll: (payload: unknown) => { ok: true } | { ok: false; error: string }
+  importRulesReplaceAll: (payload: unknown) => Promise<{ ok: true } | { ok: false; error: string }>
 }
 
 const RulesContext = createContext<RulesStore | null>(null)
 
 export function RulesProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState, () => ({
-    ...initialState,
-    rules: loadRulesFromStorage(),
-  }))
-
-  useEffect(() => {
-    saveRulesToStorage(state.rules)
-  }, [state.rules])
+  const [state, dispatch] = useReducer(reducer, initialState)
 
   const editingRule =
     state.editingRuleId ? state.rules.find((r) => r.id === state.editingRuleId) ?? null : null
@@ -180,46 +153,95 @@ export function RulesProvider({ children }: { children: React.ReactNode }) {
       rules: state.rules,
       editingRuleId: state.editingRuleId,
       editingRule,
+      targetBaseUrl: state.targetBaseUrl,
+      loading: state.loading,
+
+      refreshAll: async () => {
+        dispatch({ type: 'setLoading', value: true })
+        try {
+          const [rules, cfg] = await Promise.all([
+            apiJson<MockRule[]>('/api/rules'),
+            apiJson<{ targetBaseUrl: string }>('/api/config'),
+          ])
+          dispatch({ type: 'setAll', rules })
+          dispatch({ type: 'setTargetBaseUrl', value: cfg.targetBaseUrl ?? '' })
+        } finally {
+          dispatch({ type: 'setLoading', value: false })
+        }
+      },
+
+      setTargetBaseUrl: async (value) => {
+        const cfg = await apiJson<{ targetBaseUrl: string }>('/api/config', {
+          method: 'PUT',
+          body: JSON.stringify({ targetBaseUrl: value }),
+        })
+        dispatch({ type: 'setTargetBaseUrl', value: cfg.targetBaseUrl ?? '' })
+      },
 
       createRule: (draft) => {
-        const now = new Date().toISOString()
-        const rule: MockRule = {
-          id: createId(),
-          name: draft.name.trim() || 'New rule',
-          enabled: draft.enabled,
-          method: draft.method,
-          urlPattern: draft.urlPattern,
-          status: draft.status,
-          delayMs: draft.delayMs,
-          headers: draft.headers,
-          body: draft.body,
-          createdAt: now,
-          updatedAt: now,
-        }
-        dispatch({ type: 'create', rule })
+        void (async () => {
+          const now = new Date().toISOString()
+          const created = await apiJson<MockRule>('/api/rules', {
+            method: 'POST',
+            body: JSON.stringify({
+              id: createId(),
+              name: draft.name.trim() || 'New rule',
+              enabled: draft.enabled,
+              method: draft.method,
+              urlPattern: draft.urlPattern,
+              status: draft.status,
+              delayMs: draft.delayMs,
+              headers: draft.headers,
+              body: draft.body,
+              createdAt: now,
+              updatedAt: now,
+            }),
+          })
+          dispatch({ type: 'create', rule: created })
+        })()
       },
 
       updateRule: (id, draft) => {
-        const existing = state.rules.find((r) => r.id === id)
-        if (!existing) return
-        const now = new Date().toISOString()
-        const next: MockRule = {
-          ...existing,
-          name: draft.name.trim() || existing.name,
-          enabled: draft.enabled,
-          method: draft.method,
-          urlPattern: draft.urlPattern,
-          status: draft.status,
-          delayMs: draft.delayMs,
-          headers: draft.headers,
-          body: draft.body,
-          updatedAt: now,
-        }
-        dispatch({ type: 'update', rule: next })
+        void (async () => {
+          const existing = state.rules.find((r) => r.id === id)
+          if (!existing) return
+          const now = new Date().toISOString()
+          const updated = await apiJson<MockRule>(`/api/rules/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              ...existing,
+              name: draft.name.trim() || existing.name,
+              enabled: draft.enabled,
+              method: draft.method,
+              urlPattern: draft.urlPattern,
+              status: draft.status,
+              delayMs: draft.delayMs,
+              headers: draft.headers,
+              body: draft.body,
+              updatedAt: now,
+            }),
+          })
+          dispatch({ type: 'update', rule: updated })
+        })()
       },
 
-      deleteRule: (id) => dispatch({ type: 'delete', ruleId: id }),
-      setRuleEnabled: (id, enabled) => dispatch({ type: 'toggleEnabled', ruleId: id, enabled }),
+      deleteRule: (id) => {
+        void (async () => {
+          await apiJson<unknown>(`/api/rules/${id}`, { method: 'DELETE' })
+          dispatch({ type: 'delete', ruleId: id })
+        })()
+      },
+      setRuleEnabled: (id, enabled) => {
+        void (async () => {
+          const existing = state.rules.find((r) => r.id === id)
+          if (!existing) return
+          const updated = await apiJson<MockRule>(`/api/rules/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ ...existing, enabled }),
+          })
+          dispatch({ type: 'update', rule: updated })
+        })()
+      },
       startEditing: (id) => dispatch({ type: 'setEditingRuleId', ruleId: id }),
       cancelEditing: () => dispatch({ type: 'setEditingRuleId', ruleId: null }),
       markRuleHit: (id, timestampIso) => dispatch({ type: 'markHit', ruleId: id, timestampIso }),
@@ -230,19 +252,21 @@ export function RulesProvider({ children }: { children: React.ReactNode }) {
         rules: state.rules,
       }),
 
-      importRulesReplaceAll: (payload) => {
-        const obj = payload as any
-        if (!obj || typeof obj !== 'object') return { ok: false, error: 'Invalid JSON root (expected object).' }
-        if (obj.version !== 1) return { ok: false, error: 'Unsupported export version.' }
-        if (!Array.isArray(obj.rules)) return { ok: false, error: 'Invalid export format (rules missing).' }
-        const normalized = obj.rules
-          .map((r: any) => normalizeImportedRule(r))
-          .filter(Boolean) as MockRule[]
-        dispatch({ type: 'setAll', rules: normalized })
-        return { ok: true }
+      importRulesReplaceAll: async (payload) => {
+        try {
+          await apiJson('/api/rules/import', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          })
+          const rules = await apiJson<MockRule[]>('/api/rules')
+          dispatch({ type: 'setAll', rules })
+          return { ok: true }
+        } catch (e) {
+          return { ok: false, error: e instanceof Error ? e.message : 'Import failed.' }
+        }
       },
     }),
-    [state.rules, state.editingRuleId, editingRule],
+    [state.rules, state.editingRuleId, editingRule, state.targetBaseUrl, state.loading],
   )
 
   return React.createElement(RulesContext.Provider, { value: store }, children)

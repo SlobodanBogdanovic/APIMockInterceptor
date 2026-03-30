@@ -1,14 +1,14 @@
 import type { ChangeEvent } from 'react'
 
 type Props = {
-  onExport: () => void
-  onImportFile: (file: File) => void
+  onExport: () => Promise<void> | void
+  onImportFile: (file: File) => Promise<void> | void
 }
 
 export function Header({ onExport, onImportFile }: Props) {
   const handleImportChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) onImportFile(file)
+    if (file) void onImportFile(file)
     e.target.value = ''
   }
 
@@ -25,7 +25,7 @@ export function Header({ onExport, onImportFile }: Props) {
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={onExport}
+            onClick={() => void onExport()}
             className="rounded-md border border-white/15 bg-white/5 px-3 py-1.5 text-sm text-white hover:bg-white/10"
           >
             Export rules
