@@ -9,6 +9,19 @@ import type { RequestLogEvent } from './types'
 
 const PORT = 3001
 
+/** Local dev fronts (Vite, Angular, etc.) — extend via CORS_ORIGINS=comma,separated */
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4200',
+  'http://127.0.0.1:4200',
+]
+
+function corsOrigins(): string[] {
+  const extra = process.env.CORS_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean) ?? []
+  return [...new Set([...DEFAULT_CORS_ORIGINS, ...extra])]
+}
+
 function createId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
@@ -29,7 +42,7 @@ async function main() {
 
   app.use(
     cors({
-      origin: ['http://localhost:5173'],
+      origin: corsOrigins(),
       credentials: false,
     }),
   )
