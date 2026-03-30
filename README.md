@@ -1,3 +1,27 @@
+# API Mock Interceptor
+
+React UI (Vite) + Express proxy on **port 3001** with SQLite rules and WebSocket logs.
+
+## Run locally
+
+You need **both** processes (the UI talks to `http://localhost:3001`):
+
+```bash
+npm install
+npm run dev:all
+```
+
+Or two terminals:
+
+```bash
+npm run dev:server   # proxy + API + WebSocket
+npm run dev          # Vite UI at http://localhost:5173
+```
+
+If you only run `npm run dev`, the browser will show **connection refused** for `/api/rules` and `ws://localhost:3001/ws` until the proxy is started.
+
+---
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.

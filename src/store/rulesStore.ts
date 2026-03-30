@@ -8,6 +8,8 @@ type RulesState = {
   editingRuleId: string | null
   targetBaseUrl: string
   loading: boolean
+  /** Set when API calls fail (e.g. proxy not running). */
+  connectionError: string | null
 }
 
 type RulesAction =
@@ -20,12 +22,14 @@ type RulesAction =
   | { type: 'markHit'; ruleId: string; timestampIso: string }
   | { type: 'setTargetBaseUrl'; value: string }
   | { type: 'setLoading'; value: boolean }
+  | { type: 'setConnectionError'; value: string | null }
 
 const initialState: RulesState = {
   rules: [],
   editingRuleId: null,
   targetBaseUrl: '',
   loading: false,
+  connectionError: null,
 }
 
 function reducer(state: RulesState, action: RulesAction): RulesState {
@@ -66,6 +70,8 @@ function reducer(state: RulesState, action: RulesAction): RulesState {
       return { ...state, targetBaseUrl: action.value }
     case 'setLoading':
       return { ...state, loading: action.value }
+    case 'setConnectionError':
+      return { ...state, connectionError: action.value }
     default:
       return state
   }
@@ -73,6 +79,19 @@ function reducer(state: RulesState, action: RulesAction): RulesState {
 
 function createId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function friendlyNetworkError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (
+    msg.includes('Failed to fetch') ||
+    msg.includes('NetworkError') ||
+    msg.includes('Network request failed') ||
+    msg.includes('Load failed')
+  ) {
+    return `Cannot reach the proxy at ${API_BASE}. Start it on this machine: npm run dev:server (or npm run dev:all).`
+  }
+  return msg
 }
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -127,6 +146,8 @@ type RulesStore = {
   editingRule: MockRule | null
   targetBaseUrl: string
   loading: boolean
+  connectionError: string | null
+  clearConnectionError: () => void
   refreshAll: () => Promise<void>
   setTargetBaseUrl: (value: string) => Promise<void>
   createRule: (draft: RuleDraft) => void
@@ -155,9 +176,12 @@ export function RulesProvider({ children }: { children: React.ReactNode }) {
       editingRule,
       targetBaseUrl: state.targetBaseUrl,
       loading: state.loading,
+      connectionError: state.connectionError,
+      clearConnectionError: () => dispatch({ type: 'setConnectionError', value: null }),
 
       refreshAll: async () => {
         dispatch({ type: 'setLoading', value: true })
+        dispatch({ type: 'setConnectionError', value: null })
         try {
           const [rules, cfg] = await Promise.all([
             apiJson<MockRule[]>('/api/rules'),
@@ -165,6 +189,8 @@ export function RulesProvider({ children }: { children: React.ReactNode }) {
           ])
           dispatch({ type: 'setAll', rules })
           dispatch({ type: 'setTargetBaseUrl', value: cfg.targetBaseUrl ?? '' })
+        } catch (e) {
+          dispatch({ type: 'setConnectionError', value: friendlyNetworkError(e) })
         } finally {
           dispatch({ type: 'setLoading', value: false })
         }
@@ -266,7 +292,14 @@ export function RulesProvider({ children }: { children: React.ReactNode }) {
         }
       },
     }),
-    [state.rules, state.editingRuleId, editingRule, state.targetBaseUrl, state.loading],
+    [
+      state.rules,
+      state.editingRuleId,
+      editingRule,
+      state.targetBaseUrl,
+      state.loading,
+      state.connectionError,
+    ],
   )
 
   return React.createElement(RulesContext.Provider, { value: store }, children)

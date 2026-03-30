@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Header } from './components/Header'
 import { SettingsPanel } from './components/SettingsPanel'
 import { RuleForm } from './components/RuleForm'
@@ -37,25 +37,48 @@ export default function App() {
   const logStore = useLogStore()
   const [importError, setImportError] = useState<string | null>(null)
 
+  const wsRef = useRef<WebSocket | null>(null)
+
   useEffect(() => {
     void rulesStore.refreshAll()
 
-    const ws = new WebSocket('ws://localhost:3001/ws')
-    ws.onmessage = (msg) => {
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+    const connect = () => {
+      if (cancelled) return
       try {
-        const data = JSON.parse(String(msg.data))
-        if (data?.type === 'log' && data?.event) {
-          logStore.appendFromServerEvent(data.event)
-          if (data.event?.intercepted && data.event?.matchedRuleId) {
-            rulesStore.markRuleHit(String(data.event.matchedRuleId), String(data.event.timestamp))
+        const ws = new WebSocket('ws://localhost:3001/ws')
+        wsRef.current = ws
+        ws.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(String(msg.data))
+            if (data?.type === 'log' && data?.event) {
+              logStore.appendFromServerEvent(data.event)
+              if (data.event?.intercepted && data.event?.matchedRuleId) {
+                rulesStore.markRuleHit(String(data.event.matchedRuleId), String(data.event.timestamp))
+              }
+            }
+          } catch {
+            // ignore
           }
         }
+        ws.onclose = () => {
+          wsRef.current = null
+          if (!cancelled) retryTimer = setTimeout(connect, 2000)
+        }
       } catch {
-        // ignore
+        if (!cancelled) retryTimer = setTimeout(connect, 2000)
       }
     }
 
-    return () => ws.close()
+    connect()
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+      wsRef.current?.close()
+      wsRef.current = null
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -85,6 +108,29 @@ export default function App() {
 
       <main className="mx-auto grid max-w-6xl grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[1.2fr_0.8fr]">
         <div className="space-y-4">
+          {rulesStore.connectionError ? (
+            <div className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="font-medium text-amber-50">Proxy server not reachable</div>
+              <p className="mt-1 text-amber-100/90">{rulesStore.connectionError}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-white/20 bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/15"
+                  onClick={() => void rulesStore.refreshAll()}
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  className="rounded-md border border-white/10 px-3 py-1.5 text-xs text-white/80 hover:bg-white/5"
+                  onClick={() => rulesStore.clearConnectionError()}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {importError ? (
             <div className="rounded-xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
               {importError}
