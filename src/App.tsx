@@ -4,6 +4,7 @@ import { SettingsPanel } from './components/SettingsPanel'
 import { RuleForm } from './components/RuleForm'
 import { RuleList } from './components/RuleList'
 import { RequestLog } from './components/RequestLog'
+import { getApiBaseUrl, getLogWsUrl } from './apiConfig'
 import { useLogStore } from './store/logStore'
 import { useRulesStore } from './store/rulesStore'
 
@@ -48,7 +49,7 @@ export default function App() {
     const connect = () => {
       if (cancelled) return
       try {
-        const ws = new WebSocket('ws://localhost:3001/ws')
+        const ws = new WebSocket(getLogWsUrl())
         wsRef.current = ws
         ws.onmessage = (msg) => {
           try {
@@ -169,7 +170,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={async () => {
-                  await fetch('http://localhost:3001/api/users', { method: 'GET' })
+                  await fetch(`${getApiBaseUrl()}/api/users`, { method: 'GET' })
                 }}
                 className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10"
               >

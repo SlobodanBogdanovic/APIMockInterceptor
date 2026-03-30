@@ -40,9 +40,21 @@ async function main() {
 
   const db = createRulesDb()
 
+  // Reflect request origin so Vite on LAN (e.g. http://192.168.x.x:5173) works without CORS_ORIGINS.
   app.use(
     cors({
-      origin: corsOrigins(),
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true)
+        if (corsOrigins().includes(origin)) return cb(null, true)
+        try {
+          const u = new URL(origin)
+          const port = u.port || (u.protocol === 'https:' ? '443' : '80')
+          if (['5173', '4173', '4200'].includes(port)) return cb(null, true)
+        } catch {
+          /* ignore */
+        }
+        cb(null, false)
+      },
       credentials: false,
     }),
   )
@@ -78,11 +90,12 @@ async function main() {
   app.use(createRulesRouter(db))
   app.use(createProxyRouter({ db, emitLog }))
 
-  server.listen(PORT, () => {
+  const HOST = '0.0.0.0'
+  server.listen(PORT, HOST, () => {
     // eslint-disable-next-line no-console
-    console.log(`Proxy server listening on http://localhost:${PORT}`)
+    console.log(`Proxy server listening on http://127.0.0.1:${PORT} (all interfaces: port ${PORT})`)
     // eslint-disable-next-line no-console
-    console.log(`WebSocket log stream on ws://localhost:${PORT}/ws`)
+    console.log(`WebSocket log stream on ws://127.0.0.1:${PORT}/ws`)
   })
 }
 

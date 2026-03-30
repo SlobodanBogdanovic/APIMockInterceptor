@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useMemo, useReducer } from 'react'
+import { getApiBaseUrl } from '../apiConfig'
 import type { HeaderKV, HttpMethod, MockRule, RulesExportV1 } from '../types'
-
-const API_BASE = 'http://localhost:3001'
 
 type RulesState = {
   rules: MockRule[]
@@ -89,13 +88,13 @@ function friendlyNetworkError(err: unknown): string {
     msg.includes('Network request failed') ||
     msg.includes('Load failed')
   ) {
-    return `Cannot reach the proxy at ${API_BASE}. Start it on this machine: npm run dev:server (or npm run dev:all).`
+    return `Cannot reach the proxy at ${getApiBaseUrl()}. Start the backend (port 3001): npm run dev — or in a second terminal, npm run dev:server.`
   }
   return msg
 }
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
