@@ -1,0 +1,16 @@
+---
+description: Always run TypeScript verification after changes
+alwaysApply: true
+---
+
+# Verification: TypeScript
+
+- After any substantive code changes, run:
+
+```bash
+tsc --noEmit
+```
+
+- If it fails, fix TypeScript errors before continuing.
+- Prefer `tsc --noEmit` even if `npm run build` also type-checks.
+
